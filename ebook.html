@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lumina | Modern eReader</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.1.5/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/epubjs/dist/epub.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #ffffff;
+            --text: #1a1a1a;
+            --accent: #5e5e5e;
+            --ui-bg: rgba(255, 255, 255, 0.95);
+            --border: #eeeeee;
+        }
+
+        [data-theme="sepia"] {
+            --bg: #f4ecd8;
+            --text: #5b4636;
+            --ui-bg: rgba(244, 236, 216, 0.95);
+            --border: #e2d7bd;
+        }
+
+        [data-theme="night"] {
+            --bg: #1a1a1a;
+            --text: #d1d1d1;
+            --ui-bg: rgba(26, 26, 26, 0.95);
+            --border: #333333;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            height: 100vh;
+            overflow: hidden;
+            transition: background 0.3s ease, color 0.3s ease;
+        }
+
+        /* --- UI Components --- */
+        #header {
+            position: fixed;
+            top: 0; width: 100%; height: 60px;
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 30px; border-bottom: 1px solid var(--border);
+            background: var(--ui-bg); backdrop-filter: blur(10px);
+            z-index: 10; transform: translateY(0);
+            transition: transform 0.3s ease;
+        }
+
+        #header.hide { transform: translateY(-100%); }
+
+        .logo { font-weight: 600; letter-spacing: -0.5px; font-size: 1.2rem; }
+
+        .controls { display: flex; gap: 20px; align-items: center; }
+
+        button, label {
+            background: none; border: none; cursor: pointer;
+            font-family: 'Inter'; color: var(--text); font-size: 0.9rem;
+            opacity: 0.7; transition: opacity 0.2s;
+        }
+
+        button:hover { opacity: 1; }
+
+        /* --- Viewer --- */
+        #viewer-container {
+            height: 100vh; width: 100%;
+            display: flex; align-items: center; justify-content: center;
+        }
+
+        #viewer {
+            width: 100%; max-width: 800px; height: 80%;
+            margin-top: 40px;
+        }
+
+        /* --- Navigation --- */
+        .nav-arrow {
+            position: fixed; top: 0; bottom: 0;
+            width: 10%; display: flex; align-items: center;
+            justify-content: center; cursor: pointer;
+            z-index: 5; font-size: 2rem; opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .nav-arrow:hover { opacity: 0.3; }
+        #prev { left: 0; }
+        #next { right: 0; }
+
+        /* --- Settings Panel --- */
+        #settings-panel {
+            position: fixed; bottom: 30px; left: 50%;
+            transform: translateX(-50%);
+            background: var(--ui-bg); border: 1px solid var(--border);
+            padding: 20px 40px; border-radius: 50px;
+            display: flex; gap: 30px; align-items: center;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            z-index: 10;
+        }
+
+        .upload-btn {
+            background: var(--text); color: var(--bg);
+            padding: 8px 16px; border-radius: 20px; font-weight: 500;
+        }
+
+        select {
+            background: transparent; border: 1px solid var(--border);
+            color: var(--text); border-radius: 4px; padding: 4px;
+        }
+
+        #drop-zone {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.05);
+            display: none; align-items: center; justify-content: center;
+            z-index: 100; border: 2px dashed var(--accent);
+        }
+    </style>
+</head>
+<body>
+
+<div id="drop-zone">Drop your EPUB here</div>
+
+<header id="header">
+    <div class="logo">LUMINA</div>
+    <div class="controls">
+        <label for="file-upload" class="upload-btn">Open Book</label>
+        <input type="file" id="file-upload" accept=".epub" style="display:none;">
+    </div>
+</header>
+
+<div id="viewer-container">
+    <div id="prev" class="nav-arrow">‹</div>
+    <div id="viewer"></div>
+    <div id="next" class="nav-arrow">›</div>
+</div>
+
+<div id="settings-panel">
+    <div class="setting-group">
+        <select id="font-family">
+            <option value="'Libre Baskerville', serif">Serif</option>
+            <option value="'Inter', sans-serif">Sans Serif</option>
+        </select>
+    </div>
+    
+    <div class="setting-group">
+        <button onclick="changeSize(-2)">A-</button>
+        <span id="size-label">100%</span>
+        <button onclick="changeSize(2)">A+</button>
+    </div>
+
+    <div class="setting-group" style="display: flex; gap: 10px;">
+        <button onclick="setTheme('light')">☀</button>
+        <button onclick="setTheme('sepia')">☕</button>
+        <button onclick="setTheme('night')">☾</button>
+    </div>
+</div>
+
+<script>
+    let book, rendition;
+    let fontSize = 100;
+    const viewer = document.getElementById('viewer');
+    const fileInput = document.getElementById('file-upload');
+
+    // Initialize Reader
+    function loadBook(data) {
+        if (rendition) rendition.destroy();
+        
+        book = ePub(data);
+        rendition = book.renderTo("viewer", {
+            width: "100%",
+            height: "100%",
+            flow: "paginated",
+            manager: "default"
+        });
+
+        rendition.display();
+
+        // Apply Styles
+        applyStyles();
+        
+        // Navigation
+        document.getElementById('next').onclick = () => rendition.next();
+        document.getElementById('prev').onclick = () => rendition.prev();
+        
+        // Keyboard support
+        document.addEventListener("keyup", (e) => {
+            if (e.key === "ArrowLeft") rendition.prev();
+            if (e.key === "ArrowRight") rendition.next();
+        }, false);
+    }
+
+    fileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (event) => loadBook(event.target.result);
+            reader.readAsArrayBuffer(file);
+        }
+    });
+
+    function applyStyles() {
+        if (!rendition) return;
+        const family = document.getElementById('font-family').value;
+        rendition.themes.default({
+            'body': {
+                'font-family': `${family} !important`,
+                'font-size': `${fontSize}% !important`,
+                'color': 'var(--text) !important',
+                'line-height': '1.6 !important'
+            }
+        });
+    }
+
+    function changeSize(delta) {
+        fontSize += delta;
+        document.getElementById('size-label').innerText = fontSize + "%";
+        applyStyles();
+    }
+
+    function setTheme(theme) {
+        document.documentElement.setAttribute('data-theme', theme);
+        applyStyles();
+    }
+
+    document.getElementById('font-family').addEventListener('change', applyStyles);
+
+    // Auto-hide UI on scroll/click
+    viewer.addEventListener('click', () => {
+        document.getElementById('header').classList.toggle('hide');
+    });
+</script>
+
+</body>
+</html>
